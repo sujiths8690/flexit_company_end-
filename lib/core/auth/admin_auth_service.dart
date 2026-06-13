@@ -386,6 +386,25 @@ class AdminAuthService {
         .toList();
   }
 
+  Future<List<ManagedPlan>> deleteManagedPlanDiscount() async {
+    final response = await http.delete(
+      Uri.parse('$contentDeviceBaseUrl/../business/admin/plans/discount')
+          .normalizePath(),
+      headers: _authHeaders(),
+    );
+
+    final data = _decode(response);
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw Exception(_errorMessage(data, 'Failed to delete plan discount'));
+    }
+
+    final payload = data['data'] as Map<String, dynamic>? ?? const {};
+    final rawPlans = payload['plans'] as List<dynamic>? ?? const [];
+    return rawPlans
+        .map((item) => _managedPlanFromJson(item as Map<String, dynamic>))
+        .toList();
+  }
+
   Future<List<MobileNotification>> fetchMobileNotifications() async {
     final response = await http.get(
       Uri.parse('$contentDeviceBaseUrl/../business/admin/notifications')
@@ -464,7 +483,10 @@ class AdminAuthService {
   }
 
   Future<List<ErrorRecord>> fetchErrors() async {
-    final response = await http.get(Uri.parse(errorBaseUrl));
+    final response = await http.get(
+      Uri.parse(errorBaseUrl),
+      headers: _authHeaders(),
+    );
     final data = _decode(response);
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw Exception(_errorMessage(data, 'Failed to load errors'));
@@ -478,7 +500,10 @@ class AdminAuthService {
   }
 
   Future<List<DashboardActivity>> fetchUserActivities() async {
-    final response = await http.get(Uri.parse(activityBaseUrl));
+    final response = await http.get(
+      Uri.parse(activityBaseUrl),
+      headers: _authHeaders(),
+    );
     final data = _decode(response);
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw Exception(_errorMessage(data, 'Failed to load activity'));
