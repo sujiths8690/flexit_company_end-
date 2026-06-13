@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/config/app_config.dart';
 import '../../core/theme/app_theme.dart';
@@ -1027,10 +1028,9 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
                           5,
                           StatCard(
                             title: 'Notifications',
-                            value: AppUtils.formatNumber(
-                                _dashboardUsers
-                                    .where((user) => user.businessId != null)
-                                    .length),
+                            value: AppUtils.formatNumber(_dashboardUsers
+                                .where((user) => user.businessId != null)
+                                .length),
                             subtitle: 'Send app messages',
                             growth: 0,
                             gradientColors: const [
@@ -2495,6 +2495,8 @@ class _PlansAdminScreen extends ConsumerStatefulWidget {
 
 class _PlansAdminScreenState extends ConsumerState<_PlansAdminScreen> {
   final _priceCtrls = <String, TextEditingController>{};
+  final _minTvCtrls = <String, TextEditingController>{};
+  final _maxTvCtrls = <String, TextEditingController>{};
   final _discountCtrls = <String, TextEditingController>{};
   final _discountNameCtrl = TextEditingController();
   DateTime? _discountEndsAt;
@@ -2513,6 +2515,12 @@ class _PlansAdminScreenState extends ConsumerState<_PlansAdminScreen> {
   @override
   void dispose() {
     for (final controller in _priceCtrls.values) {
+      controller.dispose();
+    }
+    for (final controller in _minTvCtrls.values) {
+      controller.dispose();
+    }
+    for (final controller in _maxTvCtrls.values) {
       controller.dispose();
     }
     for (final controller in _discountCtrls.values) {
@@ -2547,6 +2555,10 @@ class _PlansAdminScreenState extends ConsumerState<_PlansAdminScreen> {
     for (final plan in _editablePlans) {
       _priceCtrls.putIfAbsent(plan.id, () => TextEditingController()).text =
           plan.amount.toStringAsFixed(0);
+      _minTvCtrls.putIfAbsent(plan.id, () => TextEditingController()).text =
+          plan.minTvDevices.toString();
+      _maxTvCtrls.putIfAbsent(plan.id, () => TextEditingController()).text =
+          plan.maxTvDevices.toString();
       _discountCtrls.putIfAbsent(plan.id, () => TextEditingController()).text =
           (plan.discountAmount ?? plan.amount).toStringAsFixed(0);
     }
@@ -2564,23 +2576,44 @@ class _PlansAdminScreenState extends ConsumerState<_PlansAdminScreen> {
   bool get _hasActiveDiscount =>
       _editablePlans.any((plan) => plan.hasActiveDiscount);
 
-  Future<void> _savePrices() async {
+  Future<void> _savePlans() async {
     final prices = _readPrices(_priceCtrls);
     if (prices == null) {
       _showSnack('Enter a valid price for every plan', AppColors.error);
       return;
     }
+    final planSettings = <String, Map<String, num>>{};
+    for (final plan in _editablePlans) {
+      final minTv = int.tryParse(_minTvCtrls[plan.id]?.text.trim() ?? '');
+      final maxTv = int.tryParse(_maxTvCtrls[plan.id]?.text.trim() ?? '');
+      if (minTv == null ||
+          maxTv == null ||
+          minTv < 1 ||
+          maxTv < minTv ||
+          maxTv > 100) {
+        _showSnack(
+          'Enter TV limits from 1 to 100; maximum cannot be lower than minimum',
+          AppColors.error,
+        );
+        return;
+      }
+      planSettings[plan.id] = {
+        'amount': prices[plan.id]!,
+        'minTvDevices': minTv,
+        'maxTvDevices': maxTv,
+      };
+    }
     setState(() => _savingPrices = true);
     try {
-      final plans = await ref
+      final updatedPlans = await ref
           .read(adminAuthServiceProvider)
-          .updateManagedPlanPrices(prices);
+          .updateManagedPlans(planSettings);
       if (!mounted) return;
       setState(() {
-        _setPlans(plans);
+        _setPlans(updatedPlans);
         _savingPrices = false;
       });
-      _showSnack('Plan prices updated', AppColors.success);
+      _showSnack('Plan prices and TV limits updated', AppColors.success);
     } catch (e) {
       if (!mounted) return;
       setState(() => _savingPrices = false);
@@ -2754,6 +2787,8 @@ class _PlansAdminScreenState extends ConsumerState<_PlansAdminScreen> {
                         child: _ManagedPlanCard(
                           plan: plan,
                           priceCtrl: _priceCtrls[plan.id]!,
+                          minTvCtrl: _minTvCtrls[plan.id]!,
+                          maxTvCtrl: _maxTvCtrls[plan.id]!,
                         ),
                       ),
                     ),
@@ -2761,7 +2796,7 @@ class _PlansAdminScreenState extends ConsumerState<_PlansAdminScreen> {
                     SizedBox(
                       width: double.infinity,
                       child: ElevatedButton.icon(
-                        onPressed: _savingPrices ? null : _savePrices,
+                        onPressed: _savingPrices ? null : _savePlans,
                         icon: _savingPrices
                             ? const SizedBox(
                                 width: 16,
@@ -2770,7 +2805,7 @@ class _PlansAdminScreenState extends ConsumerState<_PlansAdminScreen> {
                                     CircularProgressIndicator(strokeWidth: 2),
                               )
                             : const Icon(Icons.save_rounded),
-                        label: const Text('Save Prices'),
+                        label: const Text('Save Plan Settings'),
                       ),
                     ),
                     const SizedBox(height: 28),
@@ -2867,8 +2902,15 @@ class _PlansAdminScreenState extends ConsumerState<_PlansAdminScreen> {
 class _ManagedPlanCard extends StatelessWidget {
   final ManagedPlan plan;
   final TextEditingController priceCtrl;
+  final TextEditingController minTvCtrl;
+  final TextEditingController maxTvCtrl;
 
-  const _ManagedPlanCard({required this.plan, required this.priceCtrl});
+  const _ManagedPlanCard({
+    required this.plan,
+    required this.priceCtrl,
+    required this.minTvCtrl,
+    required this.maxTvCtrl,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -2911,6 +2953,34 @@ class _ManagedPlanCard extends StatelessWidget {
               labelText: 'Plan price',
               prefixIcon: Icon(Icons.currency_rupee_rounded),
             ),
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: minTvCtrl,
+                  keyboardType: TextInputType.number,
+                  inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                  decoration: const InputDecoration(
+                    labelText: 'Minimum TVs',
+                    prefixIcon: Icon(Icons.tv_rounded),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: TextField(
+                  controller: maxTvCtrl,
+                  keyboardType: TextInputType.number,
+                  inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                  decoration: const InputDecoration(
+                    labelText: 'Maximum TVs',
+                    prefixIcon: Icon(Icons.tv_rounded),
+                  ),
+                ),
+              ),
+            ],
           ),
         ],
       ),

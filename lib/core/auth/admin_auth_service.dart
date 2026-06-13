@@ -336,19 +336,19 @@ class AdminAuthService {
     return _requestAnalyticsFromJson(payload);
   }
 
-  Future<List<ManagedPlan>> updateManagedPlanPrices(
-    Map<String, double> prices,
+  Future<List<ManagedPlan>> updateManagedPlans(
+    Map<String, Map<String, num>> plans,
   ) async {
     final response = await http.patch(
-      Uri.parse('$contentDeviceBaseUrl/../business/admin/plans/prices')
+      Uri.parse('$contentDeviceBaseUrl/../business/admin/plans')
           .normalizePath(),
       headers: _authHeaders(),
-      body: jsonEncode({'prices': prices}),
+      body: jsonEncode({'plans': plans}),
     );
 
     final data = _decode(response);
     if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw Exception(_errorMessage(data, 'Failed to update plan prices'));
+      throw Exception(_errorMessage(data, 'Failed to update plan settings'));
     }
 
     final payload = data['data'] as Map<String, dynamic>? ?? const {};
@@ -421,8 +421,8 @@ class AdminAuthService {
     final rawNotifications =
         payload['notifications'] as List<dynamic>? ?? const [];
     return rawNotifications
-        .map((item) =>
-            _mobileNotificationFromJson(item as Map<String, dynamic>))
+        .map(
+            (item) => _mobileNotificationFromJson(item as Map<String, dynamic>))
         .toList();
   }
 
@@ -453,7 +453,8 @@ class AdminAuthService {
 
   Future<MobileNotification> resendMobileNotification(int id) async {
     final response = await http.post(
-      Uri.parse('$contentDeviceBaseUrl/../business/admin/notifications/$id/resend')
+      Uri.parse(
+              '$contentDeviceBaseUrl/../business/admin/notifications/$id/resend')
           .normalizePath(),
       headers: _authHeaders(),
     );
@@ -534,6 +535,8 @@ class AdminAuthService {
     final payload = data['data'] as Map<String, dynamic>;
     final business = payload['business'] as Map<String, dynamic>? ?? const {};
     final rawDevices = payload['devices'] as List<dynamic>? ?? const [];
+    final rawTransactions =
+        payload['transactions'] as List<dynamic>? ?? const [];
     final devices = rawDevices
         .map((item) => _deviceFromJson(
               item as Map<String, dynamic>,
@@ -566,11 +569,22 @@ class AdminAuthService {
         subscription['name']?.toString() ??
         customer.plan;
     final planEndsAt = DateTime.tryParse(
-          business['subscriptionTrialEndsAt']?.toString() ??
+          business['subscriptionEndsAt']?.toString() ??
+              subscription['endsAt']?.toString() ??
+              business['subscriptionExtensionNewEndsAt']?.toString() ??
+              business['subscriptionTrialEndsAt']?.toString() ??
               subscription['trialEndsAt']?.toString() ??
               '',
         ) ??
         customer.nextPaymentDate;
+    final subscriptionStatus =
+        (business['subscriptionStatus'] ?? subscription['status'])
+            ?.toString()
+            .toLowerCase();
+    final paymentHistory = rawTransactions
+        .whereType<Map<String, dynamic>>()
+        .map(_paymentFromJson)
+        .toList();
 
     return Customer(
       id: customer.id,
@@ -583,7 +597,7 @@ class AdminAuthService {
       city: customer.city,
       country: customer.country,
       plan: planName,
-      status: customer.status,
+      status: subscriptionStatus == 'active' ? 'Active' : customer.status,
       isOnline: devices.any((device) => device.isOnline),
       deviceCount: devices.length,
       totalUsageGB: customer.totalUsageGB,
@@ -593,7 +607,7 @@ class AdminAuthService {
       monthlyCharge: _doubleValue(
           business['subscriptionAmount'] ?? subscription['amount']),
       errorCount: customer.errorCount,
-      paymentHistory: customer.paymentHistory,
+      paymentHistory: paymentHistory,
       devices: devices,
       offers: offers,
       avatarInitials: customer.avatarInitials,
@@ -1178,8 +1192,8 @@ class AdminAuthService {
       title: json['title']?.toString() ?? 'teX notification',
       message: json['message']?.toString() ?? '',
       category: json['category']?.toString() ?? 'GENERAL',
-      sentAt: DateTime.tryParse(json['sentAt']?.toString() ?? '') ??
-          DateTime.now(),
+      sentAt:
+          DateTime.tryParse(json['sentAt']?.toString() ?? '') ?? DateTime.now(),
     );
   }
 
