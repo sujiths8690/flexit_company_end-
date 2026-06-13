@@ -317,10 +317,12 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen>
     final socketUri = base.replace(
       scheme: base.scheme == 'https' ? 'wss' : 'ws',
       path: base.path == '/' ? '' : base.path,
-      queryParameters: {'adminToken': token},
     );
 
-    WebSocket.connect(socketUri.toString()).then((socket) {
+    WebSocket.connect(
+      socketUri.toString(),
+      headers: {'Authorization': 'Bearer $token'},
+    ).then((socket) {
       if (!mounted) {
         socket.close();
         return;
@@ -2559,6 +2561,9 @@ class _PlansAdminScreenState extends ConsumerState<_PlansAdminScreen> {
   List<ManagedPlan> get _editablePlans =>
       _plans.where((plan) => plan.id != 'trial').toList();
 
+  bool get _hasActiveDiscount =>
+      _editablePlans.any((plan) => plan.hasActiveDiscount);
+
   Future<void> _savePrices() async {
     final prices = _readPrices(_priceCtrls);
     if (prices == null) {
@@ -2612,6 +2617,45 @@ class _PlansAdminScreenState extends ConsumerState<_PlansAdminScreen> {
         _savingDiscount = false;
       });
       _showSnack('Plan discount saved', AppColors.success);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _savingDiscount = false);
+      _showSnack(_cleanError(e), AppColors.error);
+    }
+  }
+
+  Future<void> _deleteDiscount() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete discount?'),
+        content: const Text(
+          'This will remove the active offer from all paid plans and restore regular prices in the customer app.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+
+    setState(() => _savingDiscount = true);
+    try {
+      final plans =
+          await ref.read(adminAuthServiceProvider).deleteManagedPlanDiscount();
+      if (!mounted) return;
+      setState(() {
+        _setPlans(plans);
+        _savingDiscount = false;
+      });
+      _showSnack('Plan discount deleted', AppColors.success);
     } catch (e) {
       if (!mounted) return;
       setState(() => _savingDiscount = false);
@@ -2776,21 +2820,41 @@ class _PlansAdminScreenState extends ConsumerState<_PlansAdminScreen> {
                             ),
                           ),
                           const SizedBox(height: 16),
-                          SizedBox(
-                            width: double.infinity,
-                            child: ElevatedButton.icon(
-                              onPressed: _savingDiscount ? null : _saveDiscount,
-                              icon: _savingDiscount
-                                  ? const SizedBox(
-                                      width: 16,
-                                      height: 16,
-                                      child: CircularProgressIndicator(
-                                          strokeWidth: 2),
-                                    )
-                                  : const Icon(Icons.sell_rounded),
-                              label: const Text('Save Discount'),
-                            ),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: ElevatedButton.icon(
+                                  onPressed:
+                                      _savingDiscount ? null : _saveDiscount,
+                                  icon: _savingDiscount
+                                      ? const SizedBox(
+                                          width: 16,
+                                          height: 16,
+                                          child: CircularProgressIndicator(
+                                              strokeWidth: 2),
+                                        )
+                                      : const Icon(Icons.sell_rounded),
+                                  label: const Text('Save Discount'),
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              IconButton.filledTonal(
+                                tooltip: 'Delete Discount',
+                                onPressed:
+                                    _savingDiscount || !_hasActiveDiscount
+                                        ? null
+                                        : _deleteDiscount,
+                                icon: const Icon(Icons.delete_outline_rounded),
+                              ),
+                            ],
                           ),
+                          if (_hasActiveDiscount) ...[
+                            const SizedBox(height: 10),
+                            Text(
+                              'Delete removes this offer from plan prices in the customer app.',
+                              style: Theme.of(context).textTheme.bodySmall,
+                            ),
+                          ],
                         ],
                       ),
                     ),
