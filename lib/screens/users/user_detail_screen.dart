@@ -77,16 +77,31 @@ class _UserDetailScreenState extends ConsumerState<UserDetailScreen>
     }
 
     if (action == 'Send Offer') {
+      final service = ref.read(adminAuthServiceProvider);
+      var planOptions = _fallbackPlanOptions;
+      try {
+        final plans = await service.fetchManagedPlans();
+        planOptions = plans
+            .where((plan) => plan.id != 'trial')
+            .map(_PlanOption.fromManagedPlan)
+            .toList();
+        if (planOptions.isEmpty) planOptions = _fallbackPlanOptions;
+      } catch (_) {}
+      if (!mounted) return;
+
       final offer = await showModalBottomSheet<_PlanOfferInput>(
         context: context,
         isScrollControlled: true,
         backgroundColor: Colors.transparent,
-        builder: (_) => _PlanOfferSheet(customer: c),
+        builder: (_) => _PlanOfferSheet(
+          customer: c,
+          plans: planOptions,
+        ),
       );
       if (offer == null) return;
       try {
         final updated =
-            await ref.read(adminAuthServiceProvider).sendCustomerPlanOffer(
+            await service.sendCustomerPlanOffer(
                   customer: c,
                   planId: offer.planId,
                   planName: offer.planName,
@@ -134,10 +149,17 @@ class _UserDetailScreenState extends ConsumerState<UserDetailScreen>
 
     return Scaffold(
       body: NestedScrollView(
-        headerSliverBuilder: (_, __) => [
-          SliverAppBar(
+        headerSliverBuilder: (nestedContext, innerBoxIsScrolled) => [
+          SliverOverlapAbsorber(
+            handle:
+                NestedScrollView.sliverOverlapAbsorberHandleFor(nestedContext),
+            sliver: SliverAppBar(
             expandedHeight: 250,
             pinned: true,
+            backgroundColor: isDark ? AppColors.darkBg : AppColors.lightBg,
+            surfaceTintColor: Colors.transparent,
+            elevation: 0,
+            forceElevated: innerBoxIsScrolled,
             flexibleSpace: FlexibleSpaceBar(
               background: Container(
                 decoration: BoxDecoration(
@@ -224,22 +246,29 @@ class _UserDetailScreenState extends ConsumerState<UserDetailScreen>
                 ),
               ),
             ),
-            bottom: TabBar(
-              controller: _tabCtrl,
-              tabs: const [
-                Tab(text: 'Overview'),
-                Tab(text: 'Payments'),
-                Tab(text: 'Devices'),
-                Tab(text: 'Errors'),
-              ],
-              labelStyle:
-                  const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
-              unselectedLabelStyle:
-                  const TextStyle(fontSize: 13, fontWeight: FontWeight.w400),
-              labelColor: AppColors.accent,
-              unselectedLabelColor: AppColors.textSecondary,
-              indicatorColor: AppColors.accent,
-              indicatorSize: TabBarIndicatorSize.tab,
+            bottom: PreferredSize(
+              preferredSize: const Size.fromHeight(kTextTabBarHeight),
+              child: Material(
+                color: isDark ? AppColors.darkBg : AppColors.lightBg,
+                child: TabBar(
+                  controller: _tabCtrl,
+                  tabs: const [
+                    Tab(text: 'Overview'),
+                    Tab(text: 'Payments'),
+                    Tab(text: 'Devices'),
+                    Tab(text: 'Errors'),
+                  ],
+                  labelStyle:
+                      const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+                  unselectedLabelStyle:
+                      const TextStyle(fontSize: 13, fontWeight: FontWeight.w400),
+                  labelColor: AppColors.accent,
+                  unselectedLabelColor: AppColors.textSecondary,
+                  indicatorColor: AppColors.accent,
+                  indicatorSize: TabBarIndicatorSize.tab,
+                ),
+              ),
+            ),
             ),
           ),
         ],
@@ -303,7 +332,7 @@ class _OverviewTab extends StatelessWidget {
     final cityValue =
         [c.city, c.country].where((part) => part.trim().isNotEmpty).join(', ');
 
-    return ListView(
+    return _NestedTabList(
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
       children: [
         // Payment Alert
@@ -451,6 +480,70 @@ class _OverviewTab extends StatelessWidget {
       child: Text(text,
           style: TextStyle(
               fontSize: 12, fontWeight: FontWeight.w600, color: color)),
+    );
+  }
+}
+
+class _NestedTabList extends StatelessWidget {
+  final EdgeInsetsGeometry padding;
+  final List<Widget> children;
+
+  const _NestedTabList({
+    required this.padding,
+    required this.children,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return CustomScrollView(
+      slivers: [
+        SliverOverlapInjector(
+          handle: NestedScrollView.sliverOverlapAbsorberHandleFor(context),
+        ),
+        SliverPadding(
+          padding: padding,
+          sliver: SliverList(
+            delegate: SliverChildListDelegate(children),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _NestedSeparatedTabList extends StatelessWidget {
+  final EdgeInsetsGeometry padding;
+  final int itemCount;
+  final IndexedWidgetBuilder itemBuilder;
+  final IndexedWidgetBuilder separatorBuilder;
+
+  const _NestedSeparatedTabList({
+    required this.padding,
+    required this.itemCount,
+    required this.itemBuilder,
+    required this.separatorBuilder,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return CustomScrollView(
+      slivers: [
+        SliverOverlapInjector(
+          handle: NestedScrollView.sliverOverlapAbsorberHandleFor(context),
+        ),
+        SliverPadding(
+          padding: padding,
+          sliver: SliverList(
+            delegate: SliverChildBuilderDelegate(
+              (context, index) {
+                if (index.isOdd) return separatorBuilder(context, index ~/ 2);
+                return itemBuilder(context, index ~/ 2);
+              },
+              childCount: itemCount == 0 ? 0 : itemCount * 2 - 1,
+            ),
+          ),
+        ),
+      ],
     );
   }
 }
@@ -864,7 +957,7 @@ class _PaymentsTab extends StatelessWidget {
       );
     }
 
-    return ListView.separated(
+    return _NestedSeparatedTabList(
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
       itemCount: c.paymentHistory.length,
       separatorBuilder: (_, __) => const SizedBox(height: 10),
@@ -967,7 +1060,7 @@ class _DevicesTab extends StatelessWidget {
       );
     }
 
-    return ListView.separated(
+    return _NestedSeparatedTabList(
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
       itemCount: c.devices.length,
       separatorBuilder: (_, __) => const SizedBox(height: 10),
@@ -1099,7 +1192,7 @@ class _ErrorsTab extends StatelessWidget {
       );
     }
 
-    return ListView(
+    return _NestedTabList(
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
       children: [
         Container(
@@ -1260,11 +1353,41 @@ class _PlanOption {
   final String id;
   final String name;
   final double amount;
+  final String? discountName;
+  final double? discountAmount;
+  final DateTime? discountEndsAt;
 
-  const _PlanOption(this.id, this.name, this.amount);
+  const _PlanOption(
+    this.id,
+    this.name,
+    this.amount, {
+    this.discountName,
+    this.discountAmount,
+    this.discountEndsAt,
+  });
+
+  factory _PlanOption.fromManagedPlan(ManagedPlan plan) {
+    return _PlanOption(
+      plan.id,
+      plan.name,
+      plan.amount,
+      discountName: plan.discountName,
+      discountAmount: plan.discountAmount,
+      discountEndsAt: plan.discountEndsAt,
+    );
+  }
+
+  bool get hasActiveDiscount =>
+      discountName != null &&
+      discountAmount != null &&
+      discountAmount! < amount &&
+      (discountEndsAt == null || discountEndsAt!.isAfter(DateTime.now()));
+
+  double get defaultOfferAmount =>
+      hasActiveDiscount ? discountAmount! : amount * 0.9;
 }
 
-const _planOptions = [
+const _fallbackPlanOptions = [
   _PlanOption('clay', 'Clay', 999),
   _PlanOption('metal', 'Metal', 2499),
   _PlanOption('steel', 'Steel', 4999),
@@ -1272,8 +1395,12 @@ const _planOptions = [
 
 class _PlanOfferSheet extends StatefulWidget {
   final Customer customer;
+  final List<_PlanOption> plans;
 
-  const _PlanOfferSheet({required this.customer});
+  const _PlanOfferSheet({
+    required this.customer,
+    required this.plans,
+  });
 
   @override
   State<_PlanOfferSheet> createState() => _PlanOfferSheetState();
@@ -1287,11 +1414,11 @@ class _PlanOfferSheetState extends State<_PlanOfferSheet> {
   @override
   void initState() {
     super.initState();
-    _selectedPlan = _planOptions.firstWhere(
+    _selectedPlan = widget.plans.firstWhere(
       (plan) => plan.name.toLowerCase() == widget.customer.plan.toLowerCase(),
-      orElse: () => _planOptions.first,
+      orElse: () => widget.plans.first,
     );
-    _amountCtrl.text = (_selectedPlan.amount * 0.9).round().toString();
+    _amountCtrl.text = _selectedPlan.defaultOfferAmount.round().toString();
     _validUntil = DateTime.now().add(const Duration(days: 7));
   }
 
@@ -1390,7 +1517,7 @@ class _PlanOfferSheetState extends State<_PlanOfferSheet> {
             DropdownButtonFormField<_PlanOption>(
               initialValue: _selectedPlan,
               decoration: const InputDecoration(labelText: 'Plan'),
-              items: _planOptions
+              items: widget.plans
                   .map(
                     (plan) => DropdownMenuItem(
                       value: plan,
@@ -1403,7 +1530,7 @@ class _PlanOfferSheetState extends State<_PlanOfferSheet> {
                 if (plan == null) return;
                 setState(() {
                   _selectedPlan = plan;
-                  _amountCtrl.text = (plan.amount * 0.9).round().toString();
+                  _amountCtrl.text = plan.defaultOfferAmount.round().toString();
                 });
               },
             ),
