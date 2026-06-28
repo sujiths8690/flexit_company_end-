@@ -20,6 +20,7 @@ class AdminAuthService {
   final String activityBaseUrl;
   String? _token;
   AdminUser? _currentAdmin;
+  final Map<String, Customer> _businessOverviewCache = {};
 
   String? get token => _token;
   AdminUser? get currentAdmin => _currentAdmin;
@@ -104,9 +105,10 @@ class AdminAuthService {
 
     final payload = data['data'] as Map<String, dynamic>;
     final users = payload['users'] as List<dynamic>? ?? const [];
-    return users
+    final customers = users
         .map((item) => _customerFromJson(item as Map<String, dynamic>))
         .toList();
+    return _enrichCustomersWithBusinessOverviews(customers);
   }
 
   Future<List<AdminUser>> fetchAdmins({String? search}) async {
@@ -698,6 +700,7 @@ class AdminAuthService {
   void logout() {
     _token = null;
     _currentAdmin = null;
+    _businessOverviewCache.clear();
   }
 
   Map<String, String> _authHeaders() {
@@ -718,6 +721,66 @@ class AdminAuthService {
 
   String _errorMessage(Map<String, dynamic> data, String fallback) {
     return data['error']?.toString() ?? data['message']?.toString() ?? fallback;
+  }
+
+  Future<List<Customer>> _enrichCustomersWithBusinessOverviews(
+    List<Customer> customers,
+  ) async {
+    final enriched = <Customer>[];
+    const batchSize = 8;
+    for (var index = 0; index < customers.length; index += batchSize) {
+      final end = (index + batchSize > customers.length)
+          ? customers.length
+          : index + batchSize;
+      final batch = customers.sublist(index, end);
+      enriched.addAll(await Future.wait(batch.map(_enrichCustomerOverview)));
+    }
+    return enriched;
+  }
+
+  Future<Customer> _enrichCustomerOverview(Customer customer) async {
+    final businessId = customer.businessId;
+    if (businessId == null || businessId.isEmpty) return customer;
+
+    final cached = _businessOverviewCache[businessId];
+    if (cached != null) return _mergeCustomerOverview(customer, cached);
+
+    try {
+      final overview = await fetchCustomerDetails(customer)
+          .timeout(const Duration(seconds: 8));
+      _businessOverviewCache[businessId] = overview;
+      return overview;
+    } catch (_) {
+      return customer;
+    }
+  }
+
+  Customer _mergeCustomerOverview(Customer customer, Customer overview) {
+    return Customer(
+      id: customer.id,
+      name: customer.name,
+      email: customer.email,
+      phone: overview.phone.isNotEmpty ? overview.phone : customer.phone,
+      address: overview.address.isNotEmpty ? overview.address : customer.address,
+      city: customer.city,
+      country: customer.country,
+      plan: overview.plan,
+      status: overview.status,
+      isOnline: overview.isOnline,
+      deviceCount: overview.deviceCount,
+      totalUsageGB: customer.totalUsageGB,
+      monthlyUsageGB: customer.monthlyUsageGB,
+      joinDate: customer.joinDate,
+      nextPaymentDate: overview.nextPaymentDate,
+      monthlyCharge: overview.monthlyCharge,
+      errorCount: customer.errorCount,
+      paymentHistory: overview.paymentHistory,
+      devices: overview.devices,
+      offers: overview.offers,
+      avatarInitials: customer.avatarInitials,
+      businessName: overview.businessName,
+      businessId: customer.businessId,
+    );
   }
 
   AdminUser _adminFromJson(Map<String, dynamic> json) {
@@ -837,6 +900,9 @@ class AdminAuthService {
     final email = json['email']?.toString() ?? '';
     final status = json['status']?.toString() ??
         ((json['isActive'] == false) ? 'Banned' : 'Active');
+    final business = json['business'] as Map<String, dynamic>?;
+    final businessName =
+        json['businessName']?.toString() ?? business?['name']?.toString();
 
     return Customer(
       id: id,
@@ -860,9 +926,10 @@ class AdminAuthService {
       devices: const [],
       offers: const [],
       avatarInitials: _initials(name.isEmpty ? email : name),
-      businessName: json['businessId'] == null
-          ? 'No business linked'
-          : 'Business #${json['businessId']}',
+      businessName: businessName ??
+          (json['businessId'] == null
+              ? 'No business linked'
+              : 'Loading business...'),
       businessId: json['businessId']?.toString(),
     );
   }
