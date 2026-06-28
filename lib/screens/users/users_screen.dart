@@ -19,6 +19,7 @@ class _UsersScreenState extends ConsumerState<UsersScreen> {
   String _filter = 'All';
   List<Customer> _filtered = [];
   bool _isLoading = true;
+  String? _error;
 
   final _filters = ['All', 'Active', 'Flagged', 'Banned'];
 
@@ -48,11 +49,12 @@ class _UsersScreenState extends ConsumerState<UsersScreen> {
       setState(() {
         _filtered = customers;
         _isLoading = false;
+        _error = null;
       });
     } catch (e) {
       if (!mounted) return;
       setState(() {
-        _filtered = const [];
+        _error = e.toString();
         _isLoading = false;
       });
     }
@@ -68,6 +70,13 @@ class _UsersScreenState extends ConsumerState<UsersScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Users'),
+        actions: [
+          IconButton(
+            tooltip: 'Refresh',
+            onPressed: _isLoading ? null : _loadUsers,
+            icon: const Icon(Icons.refresh_rounded),
+          ),
+        ],
         bottom: PreferredSize(
           preferredSize: const Size.fromHeight(110),
           child: Padding(
@@ -92,6 +101,11 @@ class _UsersScreenState extends ConsumerState<UsersScreen> {
       ),
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
+          : _error != null
+              ? _UsersErrorState(
+                  message: _error!,
+                  onRetry: _loadUsers,
+                )
           : _filtered.isEmpty
               ? const FxEmptyState(
                   icon: Icons.search_off_rounded,
@@ -113,6 +127,55 @@ class _UsersScreenState extends ConsumerState<UsersScreen> {
                     ),
                   ),
                 ),
+    );
+  }
+}
+
+class _UsersErrorState extends StatelessWidget {
+  final String message;
+  final VoidCallback onRetry;
+
+  const _UsersErrorState({
+    required this.message,
+    required this.onRetry,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(
+              Icons.cloud_off_rounded,
+              size: 44,
+              color: AppColors.error,
+            ),
+            const SizedBox(height: 12),
+            const Text(
+              'Could not load users',
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              message,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                fontSize: 12,
+                color: AppColors.textSecondary,
+              ),
+            ),
+            const SizedBox(height: 16),
+            ElevatedButton.icon(
+              onPressed: onRetry,
+              icon: const Icon(Icons.refresh_rounded),
+              label: const Text('Retry'),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
